@@ -1,0 +1,17 @@
+*.iml
+.gradle
+.kotlin
+/local.properties
+local.properties
+/.idea
+.idea
+.DS_Store
+/build
+app/build
+/captures
+.externalNativeBuild
+.cxx
+
+# Root test images & temporary device pulls
+/*.jpg
+/*.png

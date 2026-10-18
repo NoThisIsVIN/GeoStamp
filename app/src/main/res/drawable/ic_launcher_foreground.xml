@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Camera Body Outline -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M32,38 L42,38 L45,34 L63,34 L66,38 L76,38 C80.4,38 84,41.6 84,46 L84,72 C84,76.4 80.4,80 76,80 L32,80 C27.6,80 24,76.4 24,72 L24,46 C24,41.6 27.6,38 32,38 Z" />
+
+    <!-- Flash / Sensor Dot -->
+    <path
+        android:fillColor="#FFD166"
+        android:pathData="M74,45m-2.5,0a2.5,2.5 0,1 1,5 0a2.5,2.5 0,1 1,-5 0" />
+
+    <!-- Lens Outer Circle -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#48CAE4"
+        android:strokeWidth="2.5"
+        android:pathData="M54,59m-17,0a17,17 0,1 1,34 0a17,17 0,1 1,-34 0" />
+
+    <!-- Location Pin inside the lens -->
+    <path
+        android:fillColor="#FF385C"
+        android:pathData="M54,47 C50.7,47 48,49.7 48,53 C48,57.5 54,65 54,65 C54,65 60,57.5 60,53 C60,49.7 57.3,47 54,47 Z" />
+
+    <!-- Pin Center Dot -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,53m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
+</vector>

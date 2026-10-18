@@ -1,0 +1,46 @@
+<resources>
+    <string name="app_name">GeoStamp Camera</string>
+    <string name="app_tagline">GPS &amp; Location Stamped Photos</string>
+    
+    <!-- Camera controls -->
+    <string name="shutter_button">Take Photo</string>
+    <string name="switch_camera">Switch Camera</string>
+    <string name="gallery_button">Open Gallery</string>
+    <string name="settings_button">Settings</string>
+    <string name="flash_auto">Flash Auto</string>
+    <string name="flash_on">Flash On</string>
+    <string name="flash_off">Flash Off</string>
+    <string name="aspect_ratio">Aspect Ratio</string>
+    <string name="timer_off">Timer Off</string>
+    <string name="timer_3s">3s</string>
+    <string name="timer_10s">10s</string>
+    <string name="grid_lines">Grid</string>
+    
+    <!-- GPS Status -->
+    <string name="gps_acquiring">Acquiring GPS…</string>
+    <string name="gps_locked">GPS locked (±%1$dm)</string>
+    <string name="gps_last_known">Last known location</string>
+    <string name="gps_disabled">No GPS - enable location</string>
+    
+    <!-- Dialogs -->
+    <string name="location_services_title">Enable Location Services</string>
+    <string name="location_services_message">GeoStamp Camera needs GPS location services enabled to stamp accurate coordinates and addresses onto your photos.</string>
+    <string name="open_settings">Open Settings</string>
+    <string name="cancel">Cancel</string>
+    <string name="ok">OK</string>
+    
+    <!-- Permissions -->
+    <string name="permissions_title">Welcome to GeoStamp Camera</string>
+    <string name="permissions_description">GeoStamp Camera burns real-time GPS coordinates, address, compass direction, altitude, and map thumbnail directly onto your photos.\n\nTo do this, we need Camera and Location permissions.</string>
+    <string name="camera_permission_rationale">Camera permission is required to preview and capture photos.</string>
+    <string name="location_permission_rationale">Precise location permission is required to detect GPS coordinates, altitude, and look up address stamps.</string>
+    <string name="grant_permissions">Grant Permissions</string>
+    <string name="battery_tip_title">OxygenOS / Nothing OS Tip</string>
+    <string name="battery_tip_body">To prevent aggressive battery management from delaying GPS fixes, consider setting GeoStamp Camera battery usage to \'Unrestricted\' in App info.</string>
+    
+    <!-- Privacy & About -->
+    <string name="privacy_title">Privacy Policy</string>
+    <string name="privacy_body">Zero Ads. Zero Analytics. Zero Trackers.\n\nAll photos, EXIF data, and GPS locations remain strictly on your device. The app never sends your personal data to any external server.\n\nOnly anonymous requests are made to OpenStreetMap tile servers to render map thumbnails and to Open-Meteo for weather updates.</string>
+    <string name="osm_attribution">© OpenStreetMap contributors</string>
+    <string name="weather_attribution">Weather by Open-Meteo</string>
+</resources>
