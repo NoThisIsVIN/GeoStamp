@@ -41,12 +41,27 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun getMapsIntent(photo: PhotoItem): Intent? {
-        val lat = photo.latitude
-        val lng = photo.longitude
-        return if (lat != null && lng != null) {
-            photoRepository.createMapsIntent(lat, lng, photo.displayName)
+        val coords = getPhotoCoordinates(photo)
+        return if (coords != null) {
+            photoRepository.createMapsIntent(coords.first, coords.second, photo.displayName)
         } else {
             null
         }
+    }
+
+    fun getWebMapsIntent(photo: PhotoItem): Intent? {
+        val coords = getPhotoCoordinates(photo)
+        return if (coords != null) {
+            photoRepository.createWebMapsIntent(coords.first, coords.second)
+        } else {
+            null
+        }
+    }
+
+    fun getPhotoCoordinates(photo: PhotoItem): Pair<Double, Double>? {
+        val lat = photo.latitude
+        val lng = photo.longitude
+        if (lat != null && lng != null) return Pair(lat, lng)
+        return photoRepository.getCoordinatesForPhoto(photo.displayName, photo.uri)
     }
 }

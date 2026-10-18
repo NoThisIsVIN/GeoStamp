@@ -66,6 +66,16 @@ fun PhotoViewerScreen(
         val sdf = SimpleDateFormat("MMM d, yyyy • HH:mm:ss", Locale.getDefault())
         sdf.format(Date(photo.dateTaken))
     }
+    val coords = remember(photo) { viewModel.getPhotoCoordinates(photo) }
+    val subtitleText = remember(formattedDate, coords) {
+        if (coords != null) {
+            val latStr = String.format(Locale.US, "%.5f", coords.first)
+            val lngStr = String.format(Locale.US, "%.5f", coords.second)
+            "$formattedDate • $latStr, $lngStr"
+        } else {
+            formattedDate
+        }
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -82,7 +92,7 @@ fun PhotoViewerScreen(
                             maxLines = 1
                         )
                         Text(
-                            text = formattedDate,
+                            text = subtitleText,
                             color = Color.White.copy(alpha = 0.7f),
                             fontSize = 11.sp
                         )
@@ -129,12 +139,23 @@ fun PhotoViewerScreen(
                     // Open in Maps Button (if geo coordinates exist)
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         IconButton(onClick = {
-                            val mapsIntent = viewModel.getMapsIntent(photo)
-                            if (mapsIntent != null) {
+                            val resolvedCoords = coords ?: viewModel.getPhotoCoordinates(photo)
+                            if (resolvedCoords != null) {
+                                val mapsIntent = viewModel.getMapsIntent(photo)
                                 try {
-                                    context.startActivity(mapsIntent)
+                                    if (mapsIntent != null) {
+                                        context.startActivity(mapsIntent)
+                                    } else {
+                                        val webIntent = viewModel.getWebMapsIntent(photo)
+                                        context.startActivity(webIntent)
+                                    }
                                 } catch (e: Exception) {
-                                    Toast.makeText(context, "No maps application found", Toast.LENGTH_SHORT).show()
+                                    try {
+                                        val webIntent = viewModel.getWebMapsIntent(photo)
+                                        context.startActivity(webIntent)
+                                    } catch (e2: Exception) {
+                                        Toast.makeText(context, "No maps application or browser found", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
                             } else {
                                 Toast.makeText(context, "Location coordinates not embedded in this photo", Toast.LENGTH_SHORT).show()
