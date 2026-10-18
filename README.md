@@ -46,7 +46,7 @@
 
 ## 📱 Platform & Device Compatibility
 
-- **Primary Tested Platforms:** Nothing Phone (2a) (Nothing OS 2.x/3.x, Android 14–16) and OnePlus 13R (OxygenOS 15, Android 15).
+- **Primary Tested Platforms:** OnePlus 13 / 13R (ColorOS 17 / OxygenOS, Android 15–16) and Nothing Phone (2a) (Nothing OS 2.x/3.x, Android 14–16).
 - **minSdk:** 26 (Android 8.0 Oreo)
 - **targetSdk:** 35 (Android 15)
 - **compileSdk:** 35
