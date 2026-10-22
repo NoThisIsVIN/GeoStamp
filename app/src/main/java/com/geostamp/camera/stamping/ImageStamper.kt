@@ -113,9 +113,10 @@ class ImageStamper {
 
         val options = BitmapFactory.Options().apply {
             inSampleSize = sampleSize
+            inMutable = true
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        val src = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size, options)
+        val src =BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size, options)
             ?: throw IllegalStateException("Could not decode image bytes")
 
         val matrix = orientationMatrix(orientation, isFrontCamera, appSettings.mirrorSelfie)
