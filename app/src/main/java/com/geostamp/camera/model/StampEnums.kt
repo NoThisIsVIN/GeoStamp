@@ -40,7 +40,8 @@ enum class UnitSystem(val displayName: String) {
 }
 
 enum class CaptureQuality(val displayName: String, val jpegQuality: Int) {
-    HIGH("High (100%)", 100),
+    // 95 is visually indistinguishable from 100 but encodes ~2x faster at roughly half the file size.
+    HIGH("High (95%)", 95),
     MEDIUM("Medium (90%)", 90),
     STANDARD("Standard (80%)", 80)
 }

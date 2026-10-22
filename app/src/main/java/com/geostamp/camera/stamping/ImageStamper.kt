@@ -11,11 +11,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
 class ImageStamper {
 
+    /** Full-resolution render, encoded to JPEG. Falls back to half resolution on OOM. */
     suspend fun stampImage(
         jpegBytes: ByteArray,
         stampData: StampData,
@@ -24,15 +26,11 @@ class ImageStamper {
         isFrontCamera: Boolean
     ): Result<ByteArray> = withContext(Dispatchers.Default) {
         try {
-            // First attempt with full resolution
-            val stampedBytes = processBitmap(jpegBytes, stampData, stampSettings, appSettings, isFrontCamera, sampleSize = 1)
-            Result.success(stampedBytes)
+            Result.success(renderAndEncode(jpegBytes, stampData, stampSettings, appSettings, isFrontCamera, sampleSize = 1))
         } catch (oom: OutOfMemoryError) {
             System.gc()
             try {
-                // Retry with downsampled bitmap (1/2 size)
-                val stampedBytes = processBitmap(jpegBytes, stampData, stampSettings, appSettings, isFrontCamera, sampleSize = 2)
-                Result.success(stampedBytes)
+                Result.success(renderAndEncode(jpegBytes, stampData, stampSettings, appSettings, isFrontCamera, sampleSize = 2))
             } catch (oom2: OutOfMemoryError) {
                 System.gc()
                 Result.failure(Exception("Image too large to process in memory (Out of Memory)."))
@@ -42,7 +40,38 @@ class ImageStamper {
         }
     }
 
-    private fun processBitmap(
+    /**
+     * Downsampled render (longest side roughly <= [maxDimension]) for on-screen previews.
+     * The stamp is laid out relative to image width, so the result is a faithful WYSIWYG preview.
+     */
+    suspend fun renderPreview(
+        jpegBytes: ByteArray,
+        stampData: StampData,
+        stampSettings: StampSettings,
+        appSettings: AppSettings,
+        isFrontCamera: Boolean,
+        maxDimension: Int = 1600
+    ): Bitmap = withContext(Dispatchers.Default) {
+        val bitmap = renderBase(jpegBytes, appSettings, isFrontCamera, sampleSizeFor(jpegBytes, maxDimension), applyColor = true)
+        drawStamp(bitmap, stampData, stampSettings, appSettings)
+        bitmap
+    }
+
+    /** Fast, small upright thumbnail of a raw capture (no stamp, no color pass) for instant UI feedback. */
+    suspend fun decodeThumbnail(
+        jpegBytes: ByteArray,
+        appSettings: AppSettings,
+        isFrontCamera: Boolean,
+        maxDimension: Int = 320
+    ): Bitmap? = withContext(Dispatchers.Default) {
+        try {
+            renderBase(jpegBytes, appSettings, isFrontCamera, sampleSizeFor(jpegBytes, maxDimension), applyColor = false)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun renderAndEncode(
         jpegBytes: ByteArray,
         stampData: StampData,
         stampSettings: StampSettings,
@@ -50,94 +79,112 @@ class ImageStamper {
         isFrontCamera: Boolean,
         sampleSize: Int
     ): ByteArray {
-        // Read EXIF orientation before decoding
-        val exif = ExifInterface(ByteArrayInputStream(jpegBytes))
-        val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
-
-        val options = BitmapFactory.Options().apply {
-            inSampleSize = sampleSize
-            inMutable = true
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-        }
-
-        var bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size, options)
-            ?: throw IllegalStateException("Could not decode image bytes")
-
-        // Apply rotation to make upright
-        bitmap = applyExifRotation(bitmap, orientation, isFrontCamera, appSettings.mirrorSelfie)
-
-        // Enhance colors if Vibrant profile is active
-        if (appSettings.colorProfile == ColorProfile.VIBRANT) {
-            bitmap = applyVibrantEnhancement(bitmap)
-        }
-
-        // Draw stamp overlay onto bitmap
+        val bitmap = renderBase(jpegBytes, appSettings, isFrontCamera, sampleSize, applyColor = true)
         drawStamp(bitmap, stampData, stampSettings, appSettings)
-
-        // Compress to JPEG at chosen quality
-        val baos = ByteArrayOutputStream()
-        val quality = appSettings.captureQuality.jpegQuality
-        bitmap.compress(Bitmap.CompressFormat.JPEG, quality, baos)
+        val baos = ByteArrayOutputStream(bitmap.width * bitmap.height / 3)
+        bitmap.compress(Bitmap.CompressFormat.JPEG, appSettings.captureQuality.jpegQuality, baos)
         bitmap.recycle()
-
         return baos.toByteArray()
     }
 
-    private fun applyExifRotation(
-        bitmap: Bitmap,
-        orientation: Int,
-        isFrontCamera: Boolean,
-        mirrorSelfie: Boolean
-    ): Bitmap {
-        val matrix = Matrix()
+    private fun sampleSizeFor(jpegBytes: ByteArray, maxDimension: Int): Int {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size, bounds)
+        val longest = max(bounds.outWidth, bounds.outHeight)
+        var sample = 1
+        while (longest / (sample * 2) >= maxDimension) sample *= 2
+        return sample
+    }
 
+    /**
+     * Decodes the camera JPEG and produces an upright, mirrored-as-configured, aspect-cropped,
+     * color-enhanced mutable bitmap in a single draw pass (one extra full-size allocation instead of
+     * separate rotate + color copies).
+     */
+    private fun renderBase(
+        jpegBytes: ByteArray,
+        appSettings: AppSettings,
+        isFrontCamera: Boolean,
+        sampleSize: Int,
+        applyColor: Boolean
+    ): Bitmap {
+        val orientation = ExifInterface(ByteArrayInputStream(jpegBytes))
+            .getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        val src = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size, options)
+            ?: throw IllegalStateException("Could not decode image bytes")
+
+        val matrix = orientationMatrix(orientation, isFrontCamera, appSettings.mirrorSelfie)
+
+        // Upright bounds of the transformed source.
+        val mapped = RectF(0f, 0f, src.width.toFloat(), src.height.toFloat())
+        matrix.mapRect(mapped)
+        val uprightW = mapped.width()
+        val uprightH = mapped.height()
+
+        // Center-crop to the requested aspect ratio (orientation-aware: long side / short side).
+        val target = appSettings.aspectRatio.ratio
+        val isPortrait = uprightH >= uprightW
+        val longSide = max(uprightW, uprightH)
+        val shortSide = min(uprightW, uprightH)
+        var outLong = longSide
+        var outShort = shortSide
+        val current = longSide / shortSide
+        if (abs(current - target) / target > 0.02f) {
+            if (current > target) outLong = shortSide * target else outShort = longSide / target
+        }
+        val outW = (if (isPortrait) outShort else outLong).toInt().coerceAtLeast(1)
+        val outH = (if (isPortrait) outLong else outShort).toInt().coerceAtLeast(1)
+
+        val vibrant = applyColor && appSettings.colorProfile == ColorProfile.VIBRANT
+        if (matrix.isIdentity && outW == src.width && outH == src.height && !vibrant) {
+            return if (src.isMutable) src else src.copy(Bitmap.Config.ARGB_8888, true).also { src.recycle() }
+        }
+
+        // Shift transformed content so the centered crop window starts at the origin.
+        matrix.postTranslate(-mapped.left - (uprightW - outW) / 2f, -mapped.top - (uprightH - outH) / 2f)
+
+        val out = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+        val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
+            if (vibrant) colorFilter = ColorMatrixColorFilter(vibrantMatrix())
+        }
+        Canvas(out).drawBitmap(src, matrix, paint)
+        src.recycle()
+        return out
+    }
+
+    private fun orientationMatrix(orientation: Int, isFrontCamera: Boolean, mirrorSelfie: Boolean): Matrix {
+        val matrix = Matrix()
         when (orientation) {
             ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
             ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
             ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
             ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
             ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.postRotate(90f); matrix.postScale(-1f, 1f) }
+            ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.postRotate(270f); matrix.postScale(-1f, 1f) }
         }
-
-        // Handle front camera mirroring: by default we un-mirror unless mirrorSelfie is true
+        // Front camera: un-mirror by default unless the user wants selfie mirroring.
         if (isFrontCamera && !mirrorSelfie) {
             matrix.postScale(-1f, 1f)
         }
-
-        return if (!matrix.isIdentity) {
-            val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-            if (rotated != bitmap) bitmap.recycle()
-            rotated
-        } else {
-            bitmap
-        }
+        return matrix
     }
 
-    private fun applyVibrantEnhancement(bitmap: Bitmap): Bitmap {
-        val enhanced = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(enhanced)
-
-        // Boost saturation (+25%) for punchy, lifelike colors
-        val cm = ColorMatrix().apply {
-            setSaturation(1.25f)
-        }
-        // Subtle contrast curve (+10%) to lift shadows and deepen rich tones
+    /** +25% saturation followed by a +10% contrast curve. */
+    private fun vibrantMatrix(): ColorMatrix {
         val scale = 1.10f
         val translate = (-0.5f * scale + 0.5f) * 255f
-        val contrastMatrix = ColorMatrix(floatArrayOf(
+        return ColorMatrix(floatArrayOf(
             scale, 0f, 0f, 0f, translate,
             0f, scale, 0f, 0f, translate,
             0f, 0f, scale, 0f, translate,
             0f, 0f, 0f, 1f, 0f
-        ))
-        contrastMatrix.preConcat(cm)
-
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            colorFilter = ColorMatrixColorFilter(contrastMatrix)
-        }
-        canvas.drawBitmap(bitmap, 0f, 0f, paint)
-        if (enhanced != bitmap) bitmap.recycle()
-        return enhanced
+        )).apply { preConcat(ColorMatrix().apply { setSaturation(1.25f) }) }
     }
 
     private fun drawStamp(

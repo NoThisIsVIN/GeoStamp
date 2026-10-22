@@ -44,6 +44,7 @@ class SettingsDataStore(private val context: Context) {
         val UNIT_SYSTEM = stringPreferencesKey("unit_system")
         val PLAY_SHUTTER_SOUND = booleanPreferencesKey("play_shutter_sound")
         val SAVE_UNSTAMPED = booleanPreferencesKey("save_unstamped")
+        val KEEP_EDITABLE_COPY = booleanPreferencesKey("keep_editable_copy")
         val MIRROR_SELFIE = booleanPreferencesKey("mirror_selfie")
         val SHOW_GRID = booleanPreferencesKey("show_grid")
         val ALLOW_CAPTURE_WITHOUT_GPS = booleanPreferencesKey("allow_capture_without_gps")
@@ -106,6 +107,7 @@ class SettingsDataStore(private val context: Context) {
             } catch (e: Exception) { UnitSystem.METRIC },
             playShutterSound = prefs[PreferencesKeys.PLAY_SHUTTER_SOUND] ?: true,
             saveUnstampedOriginal = prefs[PreferencesKeys.SAVE_UNSTAMPED] ?: false,
+            keepEditableCopy = prefs[PreferencesKeys.KEEP_EDITABLE_COPY] ?: true,
             mirrorSelfie = prefs[PreferencesKeys.MIRROR_SELFIE] ?: false,
             showGrid = prefs[PreferencesKeys.SHOW_GRID] ?: false,
             allowCaptureWithoutGps = prefs[PreferencesKeys.ALLOW_CAPTURE_WITHOUT_GPS] ?: true,
@@ -176,6 +178,7 @@ class SettingsDataStore(private val context: Context) {
                 unitSystem = try { UnitSystem.valueOf(prefs[PreferencesKeys.UNIT_SYSTEM] ?: UnitSystem.METRIC.name) } catch (e: Exception) { UnitSystem.METRIC },
                 playShutterSound = prefs[PreferencesKeys.PLAY_SHUTTER_SOUND] ?: true,
                 saveUnstampedOriginal = prefs[PreferencesKeys.SAVE_UNSTAMPED] ?: false,
+                keepEditableCopy = prefs[PreferencesKeys.KEEP_EDITABLE_COPY] ?: true,
                 mirrorSelfie = prefs[PreferencesKeys.MIRROR_SELFIE] ?: false,
                 showGrid = prefs[PreferencesKeys.SHOW_GRID] ?: false,
                 allowCaptureWithoutGps = prefs[PreferencesKeys.ALLOW_CAPTURE_WITHOUT_GPS] ?: true,
@@ -192,6 +195,7 @@ class SettingsDataStore(private val context: Context) {
             prefs[PreferencesKeys.UNIT_SYSTEM] = updated.unitSystem.name
             prefs[PreferencesKeys.PLAY_SHUTTER_SOUND] = updated.playShutterSound
             prefs[PreferencesKeys.SAVE_UNSTAMPED] = updated.saveUnstampedOriginal
+            prefs[PreferencesKeys.KEEP_EDITABLE_COPY] = updated.keepEditableCopy
             prefs[PreferencesKeys.MIRROR_SELFIE] = updated.mirrorSelfie
             prefs[PreferencesKeys.SHOW_GRID] = updated.showGrid
             prefs[PreferencesKeys.ALLOW_CAPTURE_WITHOUT_GPS] = updated.allowCaptureWithoutGps

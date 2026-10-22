@@ -12,7 +12,6 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.geostamp.camera.GeoStampApplication
@@ -24,11 +23,15 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class CameraViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -86,6 +89,25 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val showLocationDisabledDialog: StateFlow<Boolean> = _showLocationDisabledDialog.asStateFlow()
 
     val latestPhoto: StateFlow<PhotoItem?> = photoRepository.latestPhotoFlow
+
+    /** Number of captures still being stamped/saved in the background. */
+    private val _pendingSaves = MutableStateFlow(0)
+    val pendingSaves: StateFlow<Int> = _pendingSaves.asStateFlow()
+
+    /** Small upright preview of the most recent capture, available long before the stamped file is saved. */
+    private val _captureThumbnail = MutableStateFlow<Bitmap?>(null)
+    val captureThumbnail: StateFlow<Bitmap?> = _captureThumbnail.asStateFlow()
+
+    /** Emits at the moment of exposure (for the shutter flash animation). */
+    private val _captureEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val captureEvents: SharedFlow<Unit> = _captureEvents.asSharedFlow()
+
+    /** Emits when a hardware key asks for a capture. */
+    private val _shutterRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val shutterRequests: SharedFlow<Unit> = _shutterRequests.asSharedFlow()
+
+    private val captureExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val saveMutex = Mutex()
 
     private var countdownJob: Job? = null
     private var weatherJob: Job? = null
@@ -271,7 +293,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun triggerShutter(imageCapture: ImageCapture) {
-        if (_isCapturing.value) return
+        if (_isCapturing.value || _countdownSeconds.value > 0) return
 
         val timerSeconds = appSettings.value.timerOption.seconds
         if (timerSeconds > 0) {
@@ -289,6 +311,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** Hardware shutter (volume keys). The camera screen owns the ImageCapture and fulfils the request. */
+    fun requestShutter() {
+        _shutterRequests.tryEmit(Unit)
+    }
+
     fun cancelCountdown() {
         countdownJob?.cancel()
         countdownJob = null
@@ -296,27 +323,47 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun executeCapture(imageCapture: ImageCapture) {
+        if (_isCapturing.value) return
+        if (_pendingSaves.value >= MAX_PENDING_SAVES) {
+            _toastMessage.value = "Still saving previous photos…"
+            return
+        }
         _isCapturing.value = true
 
-        val executor = ContextCompat.getMainExecutor(getApplication())
         val currentStampData = _stampData.value.copy(timestamp = System.currentTimeMillis())
         val currentStampSettings = stampSettings.value
         val currentAppSettings = appSettings.value
         val isFront = !_isBackCamera.value
+        var feedbackPlayed = false
 
         imageCapture.takePicture(
-            executor,
+            captureExecutor,
             object : ImageCapture.OnImageCapturedCallback() {
-                override fun onCaptureSuccess(image: ImageProxy) {
-                    // Feedback: Haptic & Sound
+                override fun onCaptureStarted() {
+                    // Fires at exposure time, well before the JPEG is ready: give feedback here.
+                    feedbackPlayed = true
                     playCaptureFeedback(currentAppSettings.playShutterSound)
+                    _captureEvents.tryEmit(Unit)
+                }
 
-                    val buffer: ByteBuffer = image.planes[0].buffer
-                    val bytes = ByteArray(buffer.remaining())
-                    buffer.get(bytes)
-                    image.close()
+                override fun onCaptureSuccess(image: ImageProxy) {
+                    if (!feedbackPlayed) {
+                        playCaptureFeedback(currentAppSettings.playShutterSound)
+                        _captureEvents.tryEmit(Unit)
+                    }
 
-                    viewModelScope.launch {
+                    val bytes = try {
+                        val buffer: ByteBuffer = image.planes[0].buffer
+                        ByteArray(buffer.remaining()).also { buffer.get(it) }
+                    } finally {
+                        image.close()
+                    }
+
+                    // The frame is in memory: the shutter is free again while we stamp & save in the background.
+                    _pendingSaves.update { it + 1 }
+                    _isCapturing.value = false
+
+                    app.appScope.launch {
                         processAndSaveCapturedPhoto(
                             bytes = bytes,
                             data = currentStampData,
@@ -324,7 +371,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                             appSettings = currentAppSettings,
                             isFront = isFront
                         )
-                        _isCapturing.value = false
                     }
                 }
 
@@ -342,44 +388,68 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         stampSettings: StampSettings,
         appSettings: AppSettings,
         isFront: Boolean
-    ) = withContext(Dispatchers.Default) {
-        val now = System.currentTimeMillis()
-        val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-        val fileBaseName = "GeoStamp_${sdf.format(Date(now))}"
+    ) {
+        try {
+            // Instant feedback for the gallery button (~tens of ms), independent of the save queue.
+            imageStamper.decodeThumbnail(bytes, appSettings, isFront)?.let { _captureThumbnail.value = it }
 
-        // Save unstamped original if setting enabled
-        if (appSettings.saveUnstampedOriginal) {
-            photoRepository.saveImage(
-                jpegBytes = bytes,
-                displayName = fileBaseName,
-                stampData = data,
-                isOriginal = true
-            )
-        }
+            // One full-resolution job at a time keeps peak memory bounded during burst shooting.
+            saveMutex.withLock {
+                // Millisecond suffix keeps names unique when shooting several photos per second.
+                val sdf = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US)
+                val fileBaseName = "GeoStamp_${sdf.format(Date(data.timestamp))}"
 
-        // Burn overlay stamp
-        val stampResult = imageStamper.stampImage(
-            jpegBytes = bytes,
-            stampData = data,
-            stampSettings = stampSettings,
-            appSettings = appSettings,
-            isFrontCamera = isFront
-        )
+                if (appSettings.saveUnstampedOriginal) {
+                    photoRepository.saveImage(
+                        jpegBytes = bytes,
+                        displayName = fileBaseName,
+                        stampData = data,
+                        isOriginal = true
+                    )
+                }
 
-        stampResult.onSuccess { stampedBytes ->
-            val savedUri = photoRepository.saveImage(
-                jpegBytes = stampedBytes,
-                displayName = fileBaseName,
-                stampData = data,
-                isOriginal = false
-            )
-            if (savedUri != null) {
-                _toastMessage.value = "Photo saved with GPS stamp"
-            } else {
-                _toastMessage.value = "Failed to save photo"
+                val stampResult = imageStamper.stampImage(
+                    jpegBytes = bytes,
+                    stampData = data,
+                    stampSettings = stampSettings,
+                    appSettings = appSettings,
+                    isFrontCamera = isFront
+                )
+
+                stampResult.onSuccess { stampedBytes ->
+                    val saved = photoRepository.saveImage(
+                        jpegBytes = stampedBytes,
+                        displayName = fileBaseName,
+                        stampData = data,
+                        sourceJpeg = bytes
+                    )
+                    if (saved == null) {
+                        _toastMessage.value = "Failed to save photo"
+                    } else if (appSettings.keepEditableCopy) {
+                        app.editStore.save(
+                            rawJpeg = bytes,
+                            record = EditRecord(
+                                displayName = saved.displayName,
+                                stampData = data.copy(mapThumbnail = null),
+                                stampSettings = stampSettings,
+                                isFrontCamera = isFront,
+                                mirrorSelfie = appSettings.mirrorSelfie,
+                                colorProfile = appSettings.colorProfile,
+                                aspectRatio = appSettings.aspectRatio,
+                                unitSystem = appSettings.unitSystem,
+                                captureQuality = appSettings.captureQuality
+                            )
+                        )
+                        if (app.editStore.has(saved.displayName)) {
+                            photoRepository.markEditable(saved.id)
+                        }
+                    }
+                }.onFailure { error ->
+                    _toastMessage.value = "Stamping failed: ${error.message}"
+                }
             }
-        }.onFailure { error ->
-            _toastMessage.value = "Stamping failed: ${error.message}"
+        } finally {
+            _pendingSaves.update { it - 1 }
         }
     }
 
@@ -411,7 +481,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         super.onCleared()
         soundPlayer?.release()
+        captureExecutor.shutdown()
         locationService.stopTracking()
         compassSensor.stopListening()
+    }
+
+    companion object {
+        /** Back-pressure for burst shooting: each queued capture holds a full JPEG in memory. */
+        private const val MAX_PENDING_SAVES = 4
     }
 }

@@ -33,6 +33,8 @@ data class AppSettings(
     val unitSystem: UnitSystem = UnitSystem.METRIC,
     val playShutterSound: Boolean = true,
     val saveUnstampedOriginal: Boolean = false,
+    /** Keep a private unstamped copy of each capture so its location/date/time can be edited later. */
+    val keepEditableCopy: Boolean = true,
     val mirrorSelfie: Boolean = false,
     val showGrid: Boolean = false,
     val allowCaptureWithoutGps: Boolean = true,
