@@ -60,6 +60,41 @@ class MapTileDownloader(private val context: Context) {
         bitmap
     }
 
+    /**
+     * Renders a fresh thumbnail, bypassing the 30 m reuse cache (tiles still come from the disk cache).
+     * The photo editor uses this so a small pin adjustment yields a correctly centred map.
+     */
+    suspend fun renderMapThumbnail(
+        lat: Double,
+        lng: Double,
+        zoom: Int = 16,
+        mapStyle: MapStyle = MapStyle.SATELLITE
+    ): Bitmap = withContext(Dispatchers.IO) {
+        val bitmap = try {
+            fetchAndStitchTiles(lat, lng, zoom, mapStyle)
+        } catch (e: Exception) {
+            createPlaceholderMap(lat, lng)
+        }
+        pruneCacheIfNeeded()
+        bitmap
+    }
+
+    /** One raw 256 px tile (disk-cached), or null when it can't be loaded. Used by the map picker. */
+    suspend fun loadTileBitmap(zoom: Int, x: Int, y: Int, style: MapStyle): Bitmap? =
+        withContext(Dispatchers.IO) {
+            val n = 1 shl zoom
+            if (zoom < 0 || y < 0 || y >= n) return@withContext null
+            val bmp = loadTile(zoom, ((x % n) + n) % n, y, style)
+            // Panning around can pull in hundreds of tiles, so prune periodically rather than never.
+            if (tileLoadsSincePrune.incrementAndGet() >= 100) {
+                tileLoadsSincePrune.set(0)
+                pruneCacheIfNeeded()
+            }
+            bmp
+        }
+
+    private val tileLoadsSincePrune = java.util.concurrent.atomic.AtomicInteger(0)
+
     private fun fetchAndStitchTiles(lat: Double, lng: Double, zoom: Int, mapStyle: MapStyle): Bitmap {
         val n = 1 shl zoom
         val exactTileX = (lng + 180.0) / 360.0 * n
@@ -136,7 +171,12 @@ class MapTileDownloader(private val context: Context) {
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return null
                 val bytes = response.body?.bytes() ?: return null
-                FileOutputStream(tileFile).use { it.write(bytes) }
+                // Write-then-rename: the picker and thumbnail renderer may read the same tile concurrently.
+                try {
+                    val tmp = File(cacheDir, "${tileFile.name}.${System.nanoTime()}.tmp")
+                    FileOutputStream(tmp).use { it.write(bytes) }
+                    if (!tmp.renameTo(tileFile)) tmp.delete()
+                } catch (_: Exception) {}
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             }
         } catch (e: Exception) {

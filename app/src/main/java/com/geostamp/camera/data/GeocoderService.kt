@@ -19,6 +19,13 @@ data class AddressResult(
     val countryName: String? = null
 )
 
+/** A forward-geocoding hit: a human-readable label and its coordinates. */
+data class SearchResult(
+    val label: String,
+    val latitude: Double,
+    val longitude: Double
+)
+
 class GeocoderService(private val context: Context) {
 
     private val geocoder: Geocoder = Geocoder(context, Locale.getDefault())
@@ -52,6 +59,79 @@ class GeocoderService(private val context: Context) {
         }
 
         return result
+    }
+
+    /**
+     * Reverse-geocodes without consulting or updating the 25 m cache. The photo editor needs this:
+     * a user nudging the pin by a few metres expects a fresh lookup, and its results must not leak
+     * into the live camera's cache.
+     */
+    suspend fun getAddressFresh(lat: Double, lng: Double): AddressResult? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            geocodeAsyncApi33(lat, lng)
+        } else {
+            geocodeLegacy(lat, lng)
+        }
+
+    /** Forward-geocodes a free-text place/address query. Returns an empty list on any failure. */
+    suspend fun search(query: String, maxResults: Int = 6): List<SearchResult> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            searchAsyncApi33(q, maxResults)
+        } else {
+            searchLegacy(q, maxResults)
+        }
+    }
+
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private suspend fun searchAsyncApi33(query: String, maxResults: Int): List<SearchResult> =
+        withContext(Dispatchers.IO) {
+            suspendCancellableCoroutine { cont ->
+                try {
+                    if (!Geocoder.isPresent()) {
+                        cont.resume(emptyList())
+                        return@suspendCancellableCoroutine
+                    }
+                    geocoder.getFromLocationName(query, maxResults, object : Geocoder.GeocodeListener {
+                        override fun onGeocode(addresses: MutableList<Address>) {
+                            if (cont.isActive) cont.resume(addresses.mapNotNull { it.toSearchResult() })
+                        }
+
+                        override fun onError(errorMessage: String?) {
+                            if (cont.isActive) cont.resume(emptyList())
+                        }
+                    })
+                } catch (e: Exception) {
+                    if (cont.isActive) cont.resume(emptyList())
+                }
+            }
+        }
+
+    @Suppress("DEPRECATION")
+    private suspend fun searchLegacy(query: String, maxResults: Int): List<SearchResult> =
+        withContext(Dispatchers.IO) {
+            try {
+                if (!Geocoder.isPresent()) return@withContext emptyList()
+                geocoder.getFromLocationName(query, maxResults)
+                    ?.mapNotNull { it.toSearchResult() }
+                    ?: emptyList()
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+
+    private fun Address.toSearchResult(): SearchResult? {
+        if (!hasLatitude() || !hasLongitude()) return null
+        val label = (0..maxAddressLineIndex).mapNotNull { getAddressLine(it) }
+            .joinToString(", ")
+            .ifBlank {
+                listOfNotNull(featureName, locality, adminArea, countryName)
+                    .distinct()
+                    .joinToString(", ")
+            }
+            .ifBlank { String.format(Locale.US, "%.5f, %.5f", latitude, longitude) }
+        return SearchResult(label, latitude, longitude)
     }
 
     @androidx.annotation.RequiresApi(Build.VERSION_CODES.TIRAMISU)
