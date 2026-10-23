@@ -1,7 +1,14 @@
 package com.geostamp.camera.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -18,6 +25,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,18 +60,32 @@ fun GpsStatusChip(
 
     val animatedColor by animateColorAsState(targetValue = chipColor, label = "chipColor")
 
+    // A pulsing dot signals "working on it" while a fix is being acquired.
+    val pulse = rememberInfiniteTransition(label = "gpsPulse")
+    val pulseAlpha by pulse.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.3f,
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+        label = "gpsPulseAlpha"
+    )
+    val acquiring = status == GpsStatus.ACQUIRING
+
     Row(
         modifier = modifier
+            .heightIn(min = 32.dp)
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF1E232B).copy(alpha = 0.85f))
-            .clickable { onClick() }
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .background(Color(0xFF14171E).copy(alpha = 0.6f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+            .clickable(role = Role.Button, onClickLabel = "Location status") { onClick() }
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .animateContentSize(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
         Box(
             modifier = Modifier
                 .size(8.dp)
+                .graphicsLayer { alpha = if (acquiring) pulseAlpha else 1f }
                 .clip(CircleShape)
                 .background(animatedColor)
         )

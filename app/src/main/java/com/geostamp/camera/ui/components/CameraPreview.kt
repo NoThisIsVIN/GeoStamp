@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.view.ScaleGestureDetector
 import androidx.camera.core.*
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.extensions.ExtensionMode
 import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -19,7 +21,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -32,6 +34,7 @@ fun CameraPreview(
     modifier: Modifier = Modifier,
     cameraSelector: CameraSelector,
     imageCapture: ImageCapture,
+    aspectRatioStrategy: AspectRatioStrategy = AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY,
     onCameraReady: (Camera) -> Unit = {},
     onTapToFocus: (Offset) -> Unit = {},
     onZoomChange: (Float) -> Unit = {}
@@ -56,25 +59,28 @@ fun CameraPreview(
     var camera by remember { mutableStateOf<Camera?>(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
 
-    // Re-bind whenever screen is resumed or when previewView, cameraSelector, or imageCapture changes
-    DisposableEffect(lifecycleOwner, previewViewRef, cameraSelector, imageCapture) {
+    // Binding completes asynchronously; always report to the latest callbacks, not the ones captured at bind time.
+    val currentOnCameraReady by rememberUpdatedState(onCameraReady)
+    val currentOnZoomChange by rememberUpdatedState(onZoomChange)
+
+    // Re-bind whenever screen is resumed or when previewView, cameraSelector, imageCapture or the ratio changes
+    DisposableEffect(lifecycleOwner, previewViewRef, cameraSelector, imageCapture, aspectRatioStrategy) {
         val pv = previewViewRef ?: return@DisposableEffect onDispose {}
+
+        val onBound: (Camera) -> Unit = { boundCam ->
+            camera = boundCam
+            currentOnCameraReady(boundCam)
+        }
 
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                bindCamera(context, lifecycleOwner, pv, cameraSelector, imageCapture) { boundCam ->
-                    camera = boundCam
-                    onCameraReady(boundCam)
-                }
+                bindCamera(context, lifecycleOwner, pv, cameraSelector, imageCapture, aspectRatioStrategy, onBound)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
 
         if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-            bindCamera(context, lifecycleOwner, pv, cameraSelector, imageCapture) { boundCam ->
-                camera = boundCam
-                onCameraReady(boundCam)
-            }
+            bindCamera(context, lifecycleOwner, pv, cameraSelector, imageCapture, aspectRatioStrategy, onBound)
         }
 
         onDispose {
@@ -108,16 +114,25 @@ fun CameraPreview(
                 val scaleGestureDetector = ScaleGestureDetector(
                     ctx,
                     object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                        // Track the requested ratio locally: zoomState lags behind setZoomRatio, which makes
+                        // pinching feel sticky if every step is computed from the last reported value.
+                        private var pinchRatio = 1f
+
+                        override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                            val cam = camera ?: return false
+                            pinchRatio = cam.cameraInfo.zoomState.value?.zoomRatio ?: 1f
+                            return true
+                        }
+
                         override fun onScale(detector: ScaleGestureDetector): Boolean {
                             val cam = camera ?: return false
-                            val currentZoomRatio = cam.cameraInfo.zoomState.value?.zoomRatio ?: 1f
-                            val delta = detector.scaleFactor
-                            val newZoomRatio = (currentZoomRatio * delta).coerceIn(
-                                cam.cameraInfo.zoomState.value?.minZoomRatio ?: 1f,
-                                cam.cameraInfo.zoomState.value?.maxZoomRatio ?: 10f
+                            val zoomState = cam.cameraInfo.zoomState.value
+                            pinchRatio = (pinchRatio * detector.scaleFactor).coerceIn(
+                                zoomState?.minZoomRatio ?: 1f,
+                                zoomState?.maxZoomRatio ?: 10f
                             )
-                            cam.cameraControl.setZoomRatio(newZoomRatio)
-                            onZoomChange(newZoomRatio)
+                            cam.cameraControl.setZoomRatio(pinchRatio)
+                            currentOnZoomChange(pinchRatio)
                             return true
                         }
                     }
@@ -144,6 +159,7 @@ private fun bindCamera(
     previewView: PreviewView,
     cameraSelector: CameraSelector,
     imageCapture: ImageCapture,
+    aspectRatioStrategy: AspectRatioStrategy,
     onBound: (Camera) -> Unit
 ) {
     if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA)
@@ -172,9 +188,9 @@ private fun bindCamera(
                         }
                         else -> cameraSelector
                     }
-                    bindWithSelector(cameraProvider, lifecycleOwner, previewView, targetSelector, imageCapture, onBound)
+                    bindWithSelector(cameraProvider, lifecycleOwner, previewView, targetSelector, imageCapture, aspectRatioStrategy, onBound)
                 } catch (_: Exception) {
-                    bindWithSelector(cameraProvider, lifecycleOwner, previewView, cameraSelector, imageCapture, onBound)
+                    bindWithSelector(cameraProvider, lifecycleOwner, previewView, cameraSelector, imageCapture, aspectRatioStrategy, onBound)
                 }
             }, executor)
         } catch (_: Exception) {}
@@ -187,10 +203,15 @@ private fun bindWithSelector(
     previewView: PreviewView,
     cameraSelector: CameraSelector,
     imageCapture: ImageCapture,
+    aspectRatioStrategy: AspectRatioStrategy,
     onBound: (Camera) -> Unit
 ) {
+    // The preview stream uses the same aspect strategy as ImageCapture so the viewfinder frames what is saved.
+    val resolutionSelector = ResolutionSelector.Builder()
+        .setAspectRatioStrategy(aspectRatioStrategy)
+        .build()
     try {
-        val preview = Preview.Builder().build().also {
+        val preview = Preview.Builder().setResolutionSelector(resolutionSelector).build().also {
             it.surfaceProvider = previewView.surfaceProvider
         }
         cameraProvider.unbindAll()
@@ -206,7 +227,7 @@ private fun bindWithSelector(
     } catch (e: Exception) {
         try {
             previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-            val preview = Preview.Builder().build().also {
+            val preview = Preview.Builder().setResolutionSelector(resolutionSelector).build().also {
                 it.surfaceProvider = previewView.surfaceProvider
             }
             cameraProvider.unbindAll()
