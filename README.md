@@ -6,6 +6,17 @@
 
 
 
+## ✨ What's New in 1.1.0
+
+- **Instant shutter:** the shutter is free again as soon as the frame is captured. Stamping and saving run on a background queue, so you can shoot in quick succession. Shutter sound, haptics and a viewfinder flash fire at the moment of exposure, and the gallery button shows the shot immediately.
+- **Edit location, date & time after capture:** open a photo → **Edit**. Pick a new spot on a draggable satellite/street map (or search a place / paste `lat, lng`), change the date and time, add a note. The address, map thumbnail and historical weather update automatically, and the stamp is re-rendered cleanly from a private unstamped copy (no stamp-on-stamp). EXIF and the gallery date are updated too.
+- **Faster pipeline:** rotation, aspect crop and color enhancement happen in a single pass; "High" quality is now 95% JPEG (visually identical, ~2x faster, ~half the size).
+- **Correct framing & orientation:** the saved photo now honors the 4:3 / 16:9 / 1:1 choice and is cropped to match the viewfinder; landscape shots are saved upright.
+- **Camera EXIF preserved:** exposure, ISO, aperture, focal length and lens info are carried over, plus UTC offsets so Google Photos places shots at the right time.
+- **Volume-key shutter**, quick zoom chips (ultra-wide / 1× / 2×), rotating controls.
+- **New viewer:** swipe between photos, pinch / double-tap zoom, info sheet, edit, share, open in maps.
+- **Gallery grouped by day** and a reorganized **Settings** screen with a *Keep editable copies* option (and storage usage / clear button).
+
 ## 🚀 Key Features
 
 ### 1. CameraX Engine & OEM Hardware Extensions
@@ -41,6 +52,7 @@
   - `TAG_MAKE` & `TAG_MODEL`
   - `TAG_DATETIME`, `TAG_DATETIME_ORIGINAL`, `TAG_DATETIME_DIGITIZED`
 - Option to save an additional unstamped original copy.
+- Private editable copies (app storage, excluded from cloud backup) let you re-stamp a photo with a new location/date/time; they are removed automatically when the photo is deleted.
 
 ---
 

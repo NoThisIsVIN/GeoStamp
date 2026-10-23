@@ -15,3 +15,6 @@ app/build
 # Root test images & temporary device pulls
 /*.jpg
 /*.png
+
+# Claude Code local state & agent worktrees
+.claude/
