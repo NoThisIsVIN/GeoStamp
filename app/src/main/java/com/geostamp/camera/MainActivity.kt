@@ -5,7 +5,6 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
-import android.view.OrientationEventListener
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -30,8 +29,11 @@ class MainActivity : ComponentActivity() {
 
     private val cameraViewModel: CameraViewModel by viewModels()
 
-    private var orientationEventListener: OrientationEventListener? = null
-    private var currentDeviceOrientation = 0
+    /**
+     * Set by the camera screen while it is composed. Volume keys act as a shutter only then;
+     * everywhere else (gallery, settings) they keep adjusting the volume.
+     */
+    var volumeShutterEnabled = false
 
     // Permissions launcher
     private var hasCameraPermission by mutableStateOf(false)
@@ -71,7 +73,6 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         checkPermissions()
-        setupOrientationListener()
 
         setContent {
             GeoStampCameraTheme {
@@ -119,46 +120,37 @@ class MainActivity : ComponentActivity() {
         permissionLauncher.launch(permissions.toTypedArray())
     }
 
-    private fun setupOrientationListener() {
-        orientationEventListener = object : OrientationEventListener(this) {
-            override fun onOrientationChanged(orientation: Int) {
-                if (orientation == ORIENTATION_UNKNOWN) return
-                currentDeviceOrientation = when (orientation) {
-                    in 45..134 -> 270
-                    in 135..224 -> 180
-                    in 225..314 -> 90
-                    else -> 0
-                }
-            }
-        }
-    }
-
     override fun onResume() {
         super.onResume()
         checkPermissions()
         if (hasCameraPermission && hasLocationPermission) {
             cameraViewModel.onResume()
         }
-        orientationEventListener?.enable()
     }
 
     override fun onPause() {
         super.onPause()
         cameraViewModel.onPause()
-        orientationEventListener?.disable()
     }
 
     // Hardware volume button shutter trigger
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
-            // Note: CameraViewModel can be triggered from volume button
+        if (volumeShutterEnabled && isVolumeKey(keyCode)) {
+            // Holding the key auto-repeats; fire once per press, not a burst.
+            if ((event?.repeatCount ?: 0) == 0) {
+                cameraViewModel.requestShutter()
+            }
             return true
         }
         return super.onKeyDown(keyCode, event)
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        orientationEventListener?.disable()
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        // Consume the matching key-up too, otherwise the system may still show the volume panel.
+        if (volumeShutterEnabled && isVolumeKey(keyCode)) return true
+        return super.onKeyUp(keyCode, event)
     }
+
+    private fun isVolumeKey(keyCode: Int) =
+        keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_UP
 }
