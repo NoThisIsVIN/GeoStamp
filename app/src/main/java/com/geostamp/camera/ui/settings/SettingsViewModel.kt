@@ -8,16 +8,19 @@ import com.geostamp.camera.GeoStampApplication
 import com.geostamp.camera.data.MapTileDownloader
 import com.geostamp.camera.data.SettingsDataStore
 import com.geostamp.camera.model.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val dataStore: SettingsDataStore = (application as GeoStampApplication).settingsDataStore
+    private val app = application as GeoStampApplication
+    private val dataStore: SettingsDataStore = app.settingsDataStore
     private val mapTileDownloader = MapTileDownloader(application)
 
     val stampSettings: StateFlow<StampSettings> = dataStore.stampSettingsFlow
@@ -49,7 +52,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     )
     val sampleStampData: StateFlow<StampData> = _sampleStampData.asStateFlow()
 
+    /** Bytes used by editable copies; null while being measured. */
+    private val _editableStorageBytes = MutableStateFlow<Long?>(null)
+    val editableStorageBytes: StateFlow<Long?> = _editableStorageBytes.asStateFlow()
+
+    private val _isClearingEditable = MutableStateFlow(false)
+    val isClearingEditable: StateFlow<Boolean> = _isClearingEditable.asStateFlow()
+
     init {
+        refreshEditableStorage()
         // Generate placeholder map for sample preview
         viewModelScope.launch {
             val thumb = mapTileDownloader.createPlaceholderMap(37.774929, -122.419416)
@@ -169,6 +180,34 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun toggleMirrorSelfie(enabled: Boolean) {
         viewModelScope.launch {
             dataStore.updateAppSettings { it.copy(mirrorSelfie = enabled) }
+        }
+    }
+
+    fun toggleKeepEditableCopy(enabled: Boolean) {
+        viewModelScope.launch {
+            dataStore.updateAppSettings { it.copy(keepEditableCopy = enabled) }
+        }
+    }
+
+    /** Walks the edit store directory, so it runs on the IO dispatcher. */
+    fun refreshEditableStorage() {
+        viewModelScope.launch {
+            _editableStorageBytes.value = withContext(Dispatchers.IO) { app.editStore.totalSizeBytes() }
+        }
+    }
+
+    fun clearEditableCopies() {
+        if (_isClearingEditable.value) return
+        viewModelScope.launch {
+            _isClearingEditable.value = true
+            try {
+                app.editStore.clearAll()
+                // Reload so every PhotoItem's isEditable flag drops to false.
+                app.photoRepository.loadPhotos()
+            } finally {
+                _isClearingEditable.value = false
+                refreshEditableStorage()
+            }
         }
     }
 }
