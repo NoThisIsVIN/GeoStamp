@@ -1,5 +1,6 @@
 package com.geostamp.camera.ui.edit
 
+import androidx.activity.compose.BackHandler
 import android.util.LruCache
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -42,8 +43,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.geostamp.camera.data.MapTileDownloader
 import com.geostamp.camera.data.SearchResult
 import com.geostamp.camera.model.MapStyle
@@ -144,9 +143,15 @@ fun MapPickerDialog(
     val centerLat = yToLat(centerY)
     val centerLng = xToLng(centerX)
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    // Full-screen overlay rather than a Dialog: dialog windows get unreliable insets on edge-to-edge
+    // activities, which pushed the bottom actions under the navigation bar.
+    BackHandler(onBack = onDismiss)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface)
+            // Swallow touches that miss the picker's own controls so they don't reach the screen below.
+            .pointerInput(Unit) { detectTapGestures { } }
     ) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),

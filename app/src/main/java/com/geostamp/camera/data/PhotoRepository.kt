@@ -253,7 +253,13 @@ class PhotoRepository(
             rememberCoordinates(photo.displayName, stampData)
             scanForThirdPartyGalleries(photo.uri)
 
-            loadPhotos().firstOrNull { it.id == photo.id }
+            // The write succeeded; if the reload misses the row (e.g. MediaStore still rescanning), synthesize it.
+            loadPhotos().firstOrNull { it.id == photo.id } ?: photo.copy(
+                dateTaken = stampData.timestamp,
+                latitude = stampData.latitude,
+                longitude = stampData.longitude,
+                dateModified = System.currentTimeMillis() / 1000L
+            )
         } catch (e: Exception) {
             null
         } finally {
