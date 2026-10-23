@@ -3,6 +3,8 @@ package com.geostamp.camera.ui.camera
 import android.app.Application
 import android.content.Context
 import android.graphics.Bitmap
+import android.location.Location
+import android.location.altitude.AltitudeConverter
 import android.media.MediaActionSound
 import android.os.Build
 import android.os.VibrationEffect
@@ -124,11 +126,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             locationService.locationState.collect { locState ->
                 val loc = locState.location
                 if (loc != null) {
+                    // The geoid lookup may read model data from disk.
+                    val altitude = withContext(Dispatchers.IO) { mslAltitude(loc) }
                     _stampData.update { current ->
                         current.copy(
                             latitude = loc.latitude,
                             longitude = loc.longitude,
-                            altitude = if (loc.hasAltitude()) loc.altitude else null,
+                            altitude = altitude,
                             accuracyMeters = if (loc.hasAccuracy()) loc.accuracy else null,
                             timestamp = System.currentTimeMillis(),
                             isLastKnown = locState.isLastKnown,
@@ -216,6 +220,28 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
+    }
+
+    private val altitudeConverter: Any? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) AltitudeConverter() else null
+
+    /**
+     * Height above sea level. [Location.getAltitude] is height above the WGS84 ellipsoid, which differs
+     * from sea level by up to ~100 m (about -80 m across India) and shows up as a negative "altitude".
+     */
+    private fun mslAltitude(loc: Location): Double? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            if (loc.hasMslAltitude()) return loc.mslAltitudeMeters
+            if (loc.hasAltitude()) {
+                val converted = Location(loc)
+                try {
+                    (altitudeConverter as AltitudeConverter).addMslAltitudeToLocation(getApplication(), converted)
+                    if (converted.hasMslAltitude()) return converted.mslAltitudeMeters
+                } catch (_: Exception) {}
+            }
+        }
+        // Pre-Android 14 has no geoid model; better to omit altitude than stamp a misleading one.
+        return null
     }
 
     fun onResume() {
